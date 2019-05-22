@@ -10,7 +10,6 @@ from path import Path
 from flexget import plugin
 from flexget.config_schema import one_or_more
 from flexget.event import event
-from flexget.plugin import get_plugin_by_name
 from flexget.utils.tools import TimedDict
 
 log = logging.getLogger('exists_movie')
@@ -36,13 +35,16 @@ class FilterExistsMovie(object):
                 'type': 'object',
                 'properties': {
                     'path': one_or_more({'type': 'string', 'format': 'path'}),
-                    'allow_different_qualities': {'enum': ['better', True, False], 'default': False},
+                    'allow_different_qualities': {
+                        'enum': ['better', True, False],
+                        'default': False,
+                    },
                     'type': {'enum': ['files', 'dirs'], 'default': 'dirs'},
-                    'lookup': {'enum': ['imdb', False], 'default': False}
+                    'lookup': {'enum': ['imdb', False], 'default': False},
                 },
                 'required': ['path'],
-                'additionalProperties': False
-            }
+                'additionalProperties': False,
+            },
         ]
     }
 
@@ -72,7 +74,7 @@ class FilterExistsMovie(object):
             return
 
         config = self.prepare_config(config)
-        imdb_lookup = plugin.get_plugin_by_name('imdb_lookup').instance
+        imdb_lookup = plugin.get('imdb_lookup', self)
 
         incompatible_files = 0
         incompatible_entries = 0
@@ -119,20 +121,24 @@ class FilterExistsMovie(object):
                     items.append(f.name)
 
             if not items:
-                log.verbose('No items with type %s were found in %s' % (config.get('type'), folder))
+                log.verbose(
+                    'No items with type %s were found in %s' % (config.get('type'), folder)
+                )
                 continue
 
             for item in items:
                 count_files += 1
 
-                movie = get_plugin_by_name('parsing').instance.parse_movie(item)
+                movie = plugin.get('parsing', self).parse_movie(item)
 
                 if config.get('lookup') == 'imdb':
                     try:
-                        imdb_id = imdb_lookup.imdb_id_lookup(movie_title=movie.name,
-                                                             movie_year=movie.year,
-                                                             raw_title=item,
-                                                             session=task.session)
+                        imdb_id = imdb_lookup.imdb_id_lookup(
+                            movie_title=movie.name,
+                            movie_year=movie.year,
+                            raw_title=item,
+                            session=task.session,
+                        )
                         if imdb_id in path_ids:
                             log.trace('duplicate %s' % item)
                             continue
@@ -168,7 +174,7 @@ class FilterExistsMovie(object):
             else:
                 key = 'movie_name'
                 if not entry.get('movie_name', eval_lazy=False):
-                    movie = get_plugin_by_name('parsing').instance.parse_movie(entry['title'])
+                    movie = plugin.get('parsing', self).parse_movie(entry['title'])
                     entry['movie_name'] = movie.name
 
             # actual filtering
@@ -185,9 +191,11 @@ class FilterExistsMovie(object):
                 entry.reject('movie exists')
 
         if incompatible_files or incompatible_entries:
-            log.verbose('There were some incompatible items. %s of %s entries '
-                        'and %s of %s directories could not be verified.' %
-                        (incompatible_entries, count_entries, incompatible_files, count_files))
+            log.verbose(
+                'There were some incompatible items. %s of %s entries '
+                'and %s of %s directories could not be verified.'
+                % (incompatible_entries, count_entries, incompatible_files, count_files)
+            )
 
         log.debug('-- Finished filtering entries -------------------------------')
 

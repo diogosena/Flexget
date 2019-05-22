@@ -37,14 +37,25 @@ def upgrade(ver, session):
         # Upgrade to version 0 was a failed attempt at cleaning bad entries from our table, better attempt in ver 1
         ver = 0
     if ver == 0:
-        # Remove any values that are not loadable.
-        table = table_schema('simple_persistence', session)
-        for row in session.execute(select([table.c.id, table.c.plugin, table.c.key, table.c.value])):
-            try:
-                pickle.loads(row['value'])
-            except Exception as e:
-                log.warning('Couldn\'t load %s:%s removing from db: %s' % (row['plugin'], row['key'], e))
-                session.execute(table.delete().where(table.c.id == row['id']))
+        try:
+            # Remove any values that are not loadable.
+            table = table_schema('simple_persistence', session)
+            for row in session.execute(
+                select([table.c.id, table.c.plugin, table.c.key, table.c.value])
+            ):
+                try:
+                    pickle.loads(row['value'])
+                except Exception as e:
+                    log.warning(
+                        'Couldn\'t load %s:%s removing from db: %s'
+                        % (row['plugin'], row['key'], e)
+                    )
+                    session.execute(table.delete().where(table.c.id == row['id']))
+        except Exception as e:
+            log.warning(
+                'Couldn\'t upgrade the simple_persistence table. Commencing nuke. Error: %s', e
+            )
+            raise db_schema.UpgradeImpossible
         ver = 1
     if ver == 1:
         log.info('Creating index on simple_persistence table.')
@@ -59,12 +70,18 @@ def upgrade(ver, session):
         for row in session.execute(select([table.c.id, table.c.value])):
             try:
                 p = pickle.loads(row['value'])
-                session.execute(table.update().where(table.c.id == row['id']).values(
-                    json=json.dumps(p, encode_datetime=True)))
+                session.execute(
+                    table.update()
+                    .where(table.c.id == row['id'])
+                    .values(json=json.dumps(p, encode_datetime=True))
+                )
             except Exception as e:
                 failures += 1
         if failures > 0:
-            log.error('Error upgrading %s simple_persistence pickle objects. Some information has been lost.', failures)
+            log.error(
+                'Error upgrading %s simple_persistence pickle objects. Some information has been lost.',
+                failures,
+            )
         ver = 4
     return ver
 
@@ -74,7 +91,9 @@ def db_cleanup(manager, session):
     """Clean up values in the db from tasks which no longer exist."""
     # SKVs not associated with any task use None as task tame
     existing_tasks = list(manager.tasks) + [None]
-    session.query(SimpleKeyValue).filter(~SimpleKeyValue.task.in_(existing_tasks)).delete(synchronize_session=False)
+    session.query(SimpleKeyValue).filter(~SimpleKeyValue.task.in_(existing_tasks)).delete(
+        synchronize_session=False
+    )
 
 
 class SimpleKeyValue(Base):
@@ -98,7 +117,12 @@ class SimpleKeyValue(Base):
         return "<SimpleKeyValue('%s','%s','%s')>" % (self.task, self.key, self.value)
 
 
-Index('ix_simple_persistence_feed_plugin_key', SimpleKeyValue.task, SimpleKeyValue.plugin, SimpleKeyValue.key)
+Index(
+    'ix_simple_persistence_feed_plugin_key',
+    SimpleKeyValue.task,
+    SimpleKeyValue.plugin,
+    SimpleKeyValue.key,
+)
 
 
 class SimplePersistence(MutableMapping):
@@ -108,6 +132,7 @@ class SimplePersistence(MutableMapping):
     This should only be used if a plugin needs to store a few values, otherwise it should create a full table in
     the database.
     """
+
     # Stores values in store[taskname][pluginname][key] format
     class_store = defaultdict(lambda: defaultdict(dict))
 
@@ -120,7 +145,7 @@ class SimplePersistence(MutableMapping):
         return self.class_store[self.taskname][self.plugin]
 
     def __setitem__(self, key, value):
-        log.debug('setting key %s value %s' % (key, repr(value)))
+        log.debug('setting key %s value %s', key, repr(value))
         self.store[key] = value
 
     def __getitem__(self, key):
@@ -142,7 +167,14 @@ class SimplePersistence(MutableMapping):
         """Load all key/values from `task` into memory from database."""
         with Session() as session:
             for skv in session.query(SimpleKeyValue).filter(SimpleKeyValue.task == task).all():
-                cls.class_store[task][skv.plugin][skv.key] = skv.value
+                try:
+                    cls.class_store[task][skv.plugin][skv.key] = skv.value
+                except TypeError as e:
+                    log.warning(
+                        'Value stored in simple_persistence cannot be decoded. It will be removed. Error: %s',
+                        str(e),
+                    )
+                    cls.class_store[task][skv.plugin][skv.key] = DELETE
 
     @classmethod
     def flush(cls, task=None):
@@ -151,23 +183,24 @@ class SimplePersistence(MutableMapping):
         with Session() as session:
             for pluginname in cls.class_store[task]:
                 for key, value in cls.class_store[task][pluginname].items():
-                    query = (session.query(SimpleKeyValue).
-                             filter(SimpleKeyValue.task == task).
-                             filter(SimpleKeyValue.plugin == pluginname).
-                             filter(SimpleKeyValue.key == key))
+                    query = (
+                        session.query(SimpleKeyValue)
+                        .filter(SimpleKeyValue.task == task)
+                        .filter(SimpleKeyValue.plugin == pluginname)
+                        .filter(SimpleKeyValue.key == key)
+                    )
                     if value == DELETE:
                         query.delete()
                     else:
                         updated = query.update(
                             {'value': newstr(json.dumps(value, encode_datetime=True))},
-                            synchronize_session=False
+                            synchronize_session=False,
                         )
                         if not updated:
                             session.add(SimpleKeyValue(task, pluginname, key, value))
 
 
 class SimpleTaskPersistence(SimplePersistence):
-
     def __init__(self, task):
         self.task = task
         self.taskname = task.name

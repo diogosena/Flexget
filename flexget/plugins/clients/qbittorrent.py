@@ -9,6 +9,8 @@ from requests.exceptions import RequestException
 
 from flexget import plugin
 from flexget.event import event
+from flexget.utils.template import RenderError
+
 
 log = logging.getLogger('qbittorrent')
 
@@ -26,7 +28,10 @@ class OutputQBitTorrent(object):
         verify_cert: <VERIFY> (default: True)
         path: <OUTPUT_DIR> (default: (none))
         label: <LABEL> (default: (none))
+        maxupspeed: <torrent upload speed limit> (default: 0)
+        maxdownspeed: <torrent download speed limit> (default: 0)
     """
+
     schema = {
         'anyOf': [
             {'type': 'boolean'},
@@ -41,10 +46,12 @@ class OutputQBitTorrent(object):
                     'verify_cert': {'type': 'boolean'},
                     'path': {'type': 'string'},
                     'label': {'type': 'string'},
-                    'fail_html': {'type': 'boolean'}
+                    'maxupspeed': {'type': 'integer'},
+                    'maxdownspeed': {'type': 'integer'},
+                    'fail_html': {'type': 'boolean'},
                 },
-                'additionalProperties': False
-            }
+                'additionalProperties': False,
+            },
         ]
     }
 
@@ -52,12 +59,18 @@ class OutputQBitTorrent(object):
         try:
             response = self.session.request(method, url, **kwargs)
             if response == 'Fails.':
-                msg = 'Failure. URL: {}, data: {}'.format(url, kwargs) if not msg_on_fail else msg_on_fail
+                msg = (
+                    'Failure. URL: {}, data: {}'.format(url, kwargs)
+                    if not msg_on_fail
+                    else msg_on_fail
+                )
             else:
                 return response
         except RequestException as e:
             msg = str(e)
-        raise plugin.PluginError('Error when trying to send request to qBittorrent: {}'.format(msg))
+        raise plugin.PluginError(
+            'Error when trying to send request to qBittorrent: {}'.format(msg)
+        )
 
     def connect(self, config):
         """
@@ -66,12 +79,18 @@ class OutputQBitTorrent(object):
         'localhost'.
         """
         self.session = Session()
-        self.url = '{}://{}:{}'.format('https' if config['use_ssl'] else 'http', config['host'], config['port'])
+        self.url = '{}://{}:{}'.format(
+            'https' if config['use_ssl'] else 'http', config['host'], config['port']
+        )
         if config.get('username') and config.get('password'):
-            data = {'username': config['username'],
-                    'password': config['password']}
-            self._request('post', self.url + '/login', data=data, msg_on_fail='Authentication failed.',
-                                  verify=config['verify_cert'])
+            data = {'username': config['username'], 'password': config['password']}
+            self._request(
+                'post',
+                self.url + '/login',
+                data=data,
+                msg_on_fail='Authentication failed.',
+                verify=config['verify_cert'],
+            )
         log.debug('Successfully connected to qBittorrent')
         self.connected = True
 
@@ -81,8 +100,13 @@ class OutputQBitTorrent(object):
         multipart_data = {k: (None, v) for k, v in data.items()}
         with open(file_path, 'rb') as f:
             multipart_data['torrents'] = f
-            self._request('post', self.url + '/command/upload', msg_on_fail='Failed to add file to qBittorrent',
-                                  files=multipart_data, verify=verify_cert)
+            self._request(
+                'post',
+                self.url + '/command/upload',
+                msg_on_fail='Failed to add file to qBittorrent',
+                files=multipart_data,
+                verify=verify_cert,
+            )
         log.debug('Added torrent file %s to qBittorrent', file_path)
 
     def add_torrent_url(self, url, data, verify_cert):
@@ -90,8 +114,13 @@ class OutputQBitTorrent(object):
             raise plugin.PluginError('Not connected.')
         data['urls'] = url
         multipart_data = {k: (None, v) for k, v in data.items()}
-        self._request('post', self.url + '/command/download', msg_on_fail='Failed to add file to qBittorrent',
-                              files=multipart_data, verify=verify_cert)
+        self._request(
+            'post',
+            self.url + '/command/download',
+            msg_on_fail='Failed to add file to qBittorrent',
+            files=multipart_data,
+            verify=verify_cert,
+        )
         log.debug('Added url %s to qBittorrent', url)
 
     def prepare_config(self, config):
@@ -103,20 +132,33 @@ class OutputQBitTorrent(object):
         config.setdefault('use_ssl', False)
         config.setdefault('verify_cert', True)
         config.setdefault('label', '')
+        config.setdefault('maxupspeed', 0)
+        config.setdefault('maxdownspeed', 0)
         config.setdefault('fail_html', True)
         return config
 
     def add_entries(self, task, config):
         for entry in task.accepted:
             form_data = {}
-            save_path = entry.get('path', config.get('path'))
-            if save_path:
-                form_data['savepath'] = save_path
+            try:
+                save_path = entry.render(entry.get('path', config.get('path', '')))
+                if save_path:
+                    form_data['savepath'] = save_path
+            except RenderError as e:
+                log.error('Error setting path for %s: %s', entry['title'], e)
 
             label = entry.get('label', config.get('label'))
             if label:
                 form_data['label'] = label  # qBittorrent v3.3.3-
                 form_data['category'] = label  # qBittorrent v3.3.4+
+
+            maxupspeed = entry.get('maxupspeed', config.get('maxupspeed'))
+            if maxupspeed:
+                form_data['upLimit'] = maxupspeed * 1024
+
+            maxdownspeed = entry.get('maxdownspeed', config.get('maxdownspeed'))
+            if maxdownspeed:
+                form_data['dlLimit'] = maxdownspeed * 1024
 
             is_magnet = entry['url'].startswith('magnet:')
 
@@ -129,6 +171,10 @@ class OutputQBitTorrent(object):
                     log.info('Url: %s', entry.get('url'))
                 log.info('Save path: %s', form_data.get('savepath'))
                 log.info('Label: %s', form_data.get('label'))
+                if maxupspeed:
+                    log.info('Upload Speed Limit: %d', form_data.get('upLimit'))
+                if maxdownspeed:
+                    log.info('Download Speed Limit: %d', form_data.get('dlLimit'))
                 continue
 
             if not is_magnet:
@@ -155,8 +201,8 @@ class OutputQBitTorrent(object):
         if not config['enabled']:
             return
         if 'download' not in task.config:
-            download = plugin.get_plugin_by_name('download')
-            download.instance.get_temp_files(task, handle_magnets=True, fail_html=config['fail_html'])
+            download = plugin.get('download', self)
+            download.get_temp_files(task, handle_magnets=True, fail_html=config['fail_html'])
 
     @plugin.priority(135)
     def on_task_output(self, task, config):

@@ -3,7 +3,7 @@ from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
 
 import pytest
 
-from flexget.api.plugins.imdb_lookup import ObjectsContainer as OC
+from flexget.components.imdb.api import ObjectsContainer as OC
 from flexget.utils import json
 
 
@@ -17,7 +17,7 @@ class TestIMDBLookupAPI(object):
         assert rsp.status_code == 404, 'Response code is %s' % rsp.status_code
 
         # Lookup by title
-        rsp = api_client.get('/imdb/search/matrix/')
+        rsp = api_client.get('/imdb/search/saw/')
         assert rsp.status_code == 200, 'Response code is %s' % rsp.status_code
 
         data = json.loads(rsp.get_data(as_text=True))

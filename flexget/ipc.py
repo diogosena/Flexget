@@ -61,6 +61,10 @@ class DaemonService(rpyc.Service):
     # This will be populated when the server is started
     manager = None
 
+    def on_connect(self, conn):
+        self._conn = conn
+        super(DaemonService, self).on_connect(conn)
+
     def exposed_version(self):
         return IPC_VERSION
 
@@ -98,12 +102,14 @@ class DaemonService(rpyc.Service):
 
 
 class ClientService(rpyc.Service):
-    def on_connect(self):
+    def on_connect(self, conn):
+        self._conn = conn
         """Make sure the client version matches our own."""
         daemon_version = self._conn.root.version()
         if IPC_VERSION != daemon_version:
             self._conn.close()
             raise ValueError('Daemon is different version than client.')
+        super(ClientService, self).on_connect(conn)
 
     def exposed_version(self):
         return IPC_VERSION
@@ -122,7 +128,9 @@ class IPCServer(threading.Thread):
         self.manager = manager
         self.host = '127.0.0.1'
         self.port = port or 0
-        self.password = ''.join(random.choice(string.ascii_letters + string.digits) for x in range(15))
+        self.password = ''.join(
+            random.choice(string.ascii_letters + string.digits) for x in range(15)
+        )
         self.server = None
 
     def authenticator(self, sock):
@@ -141,7 +149,11 @@ class IPCServer(threading.Thread):
             rpyc_logger.setLevel(logging.WARNING)
         DaemonService.manager = self.manager
         self.server = ThreadedServer(
-            DaemonService, hostname=self.host, port=self.port, authenticator=self.authenticator, logger=rpyc_logger
+            DaemonService,
+            hostname=self.host,
+            port=self.port,
+            authenticator=self.authenticator,
+            logger=rpyc_logger,
         )
         # If we just chose an open port, write save the chosen one
         self.port = self.server.listener.getsockname()[1]
@@ -161,7 +173,9 @@ class IPCClient(object):
         if response == AUTH_ERROR:
             # TODO: What to raise here. I guess we create a custom error
             raise ValueError('Invalid password for daemon')
-        self.conn = rpyc.utils.factory.connect_channel(channel, service=ClientService)
+        self.conn = rpyc.utils.factory.connect_channel(
+            channel, service=ClientService, config={'sync_request_timeout': None}
+        )
 
     def close(self):
         self.conn.close()

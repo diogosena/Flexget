@@ -3,7 +3,7 @@ from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
 
 import pytest
 
-from flexget.utils.imdb import ImdbParser
+from flexget.components.imdb.utils import ImdbParser
 
 
 @pytest.mark.online
@@ -26,14 +26,18 @@ class TestImdbParser(object):
             'nm0001629': 'Kevin Pollak',
             'nm0107808': 'Carl Bressler',
             'nm0001125': 'Benicio Del Toro',
-            'nm0000860': 'Paul Bartel'
+            'nm0000860': 'Paul Bartel',
         }, 'Actors not parsed correctly'
         assert parser.directors == {'nm0001741': 'Bryan Singer'}, 'Directors not parsed correctly'
-        assert len(set(parser.genres).intersection([u'crime', u'drama', u'mystery', u'thriller'])) == \
-            len([u'crime', u'drama', u'mystery', u'thriller']), 'Genres not parsed correctly'
+        print(parser.genres)
+        assert len(set(parser.genres).intersection([u'crime', u'mystery', u'thriller'])) == len(
+            [u'crime', u'mystery', u'thriller']
+        ), 'Genres not parsed correctly'
         assert parser.imdb_id == 'tt0114814', 'ID not parsed correctly'
-        assert len(set(parser.languages).intersection(
-            ['english', 'hungarian', 'spanish', 'french'])) == 4, 'Languages not parsed correctly'
+        assert (
+            len(set(parser.languages).intersection(['english', 'hungarian', 'spanish', 'french']))
+            == 4
+        ), 'Languages not parsed correctly'
         assert parser.mpaa_rating == 'R', 'Rating not parsed correctly'
         assert parser.name == 'The Usual Suspects', 'Name not parsed correctly'
         assert parser.photo, 'Photo not parsed correctly'
@@ -45,7 +49,7 @@ class TestImdbParser(object):
             'leaves 27 men dead in a boat explosion, but the real question arises now: Who actually is Keyser S\xf6ze?'
         ), 'Plot outline not parsed correctly'
         assert 8.0 < parser.score < 9.0, 'Score not parsed correctly'
-        assert parser.url == 'http://www.imdb.com/title/tt0114814/', 'URL not parsed correctly'
+        assert parser.url == 'https://www.imdb.com/title/tt0114814/', 'URL not parsed correctly'
         assert 400000 < parser.votes < 1000000, 'Votes not parsed correctly'
         assert parser.year == 1995, 'Year not parsed correctly'
 
@@ -69,9 +73,11 @@ class TestImdbParser(object):
         """Make sure plot doesn't terminate at the first link. GitHub #756"""
         parser = ImdbParser()
         parser.parse('tt2503944')
-        assert parser.plot_outline == ("Chef Adam Jones (Bradley Cooper) had it all - and lost it. A two-star Michelin "
-                                       "rockstar with the bad habits to match, the former enfant terrible of the Paris "
-                                       "restaurant scene did everything different every time out, and only ever cared "
-                                       "about the thrill of creating explosions of taste. To land his own kitchen and "
-                                       "that third elusive Michelin star though, he'll need the best of the best on "
-                                       "his side, including the beautiful Helene (Sienna Miller).")
+        assert parser.plot_outline == (
+            "Chef Adam Jones (Bradley Cooper) had it all - and lost it. A two-star Michelin "
+            "rockstar with the bad habits to match, the former enfant terrible of the Paris "
+            "restaurant scene did everything different every time out, and only ever cared "
+            "about the thrill of creating explosions of taste. To land his own kitchen and "
+            "that third elusive Michelin star though, he'll need the best of the best on "
+            "his side, including the beautiful Helene (Sienna Miller)."
+        )
